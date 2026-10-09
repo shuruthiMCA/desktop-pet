@@ -1,0 +1,314 @@
+<body style="background: transparent; margin: 0; overflow: hidden;">
+<style>
+  * { box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+
+  #bubble {
+    display: none; position: absolute; bottom: 365px; left: 0; width: 280px;
+    padding: 16px 18px; border-radius: 20px; color: #fff;
+    background: linear-gradient(135deg, rgba(30,41,59,.95), rgba(8,47,73,.95));
+    border: 1px solid rgba(125,211,252,.45);
+    box-shadow: 0 12px 32px rgba(14,165,233,.35), inset 0 0 0 1px rgba(255,255,255,.05);
+    backdrop-filter: blur(12px);
+    animation: pop .5s cubic-bezier(.2,1.5,.4,1);
+  }
+  #bubble::after {
+    content: ''; position: absolute; bottom: -9px; left: 100px;
+    width: 18px; height: 18px; transform: rotate(45deg);
+    background: rgba(8,47,73,.95);
+    border-right: 1px solid rgba(125,211,252,.45);
+    border-bottom: 1px solid rgba(125,211,252,.45);
+  }
+  @keyframes pop { 0% { transform: scale(.3) translateY(30px); opacity: 0; }
+                   100% { transform: scale(1) translateY(0); opacity: 1; } }
+  @keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+
+  .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  #icon { font-size: 24px; animation: floaty 1.6s ease-in-out infinite; }
+  #title { font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: #7dd3fc; font-weight: 700; }
+  #msg { font-size: 15px; font-weight: 600; line-height: 1.35; margin-bottom: 12px; }
+
+  #dots { display: flex; gap: 5px; margin-bottom: 4px; }
+  .dot { width: 22px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.15); }
+  .dot.on { background: linear-gradient(90deg, #38bdf8, #22d3ee); box-shadow: 0 0 8px #38bdf8; }
+  #counter { font-size: 11px; color: #94a3b8; margin-bottom: 12px; }
+
+  #actions { display: flex; gap: 8px; }
+  button { flex: 1; border: none; border-radius: 12px; padding: 9px 6px; font-size: 13px;
+           font-weight: 600; cursor: pointer; transition: transform .15s; }
+  button:hover { transform: translateY(-2px); }
+  #yes { color: #fff; background: linear-gradient(135deg, #0ea5e9, #06b6d4);
+         box-shadow: 0 4px 14px rgba(14,165,233,.5); }
+  #later { color: #cbd5e1; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15); }
+    #talk {
+    display: none; position: absolute; bottom: 365px; left: 0; width: 240px;
+    padding: 12px 14px; border-radius: 16px; color: #fff; font-size: 14px; font-weight: 600;
+    background: linear-gradient(135deg, rgba(30,41,59,.95), rgba(8,47,73,.95));
+    border: 1px solid rgba(125,211,252,.45);
+    box-shadow: 0 10px 26px rgba(14,165,233,.35);
+    animation: pop .4s cubic-bezier(.2,1.5,.4,1);
+  }
+</style>
+
+  <div id="box" style="position:absolute; bottom:0; left:0;">
+        <div id="talk"></div>
+    <div id="bubble">
+      <div class="head"><span id="icon"></span><span id="title"></span></div>
+      <div id="msg"></div>
+      <div id="dots"></div>
+      <div id="counter"></div>
+      <div id="actions">
+        <button id="yes">Done ✓</button>
+        <button id="later">Remind me later</button>
+      </div>
+    </div>
+    <video id="walk" src="images/walk.webm" loop muted autoplay playsinline
+           style="height:350px; display:block;"></video>
+    <img id="pose" style="height:350px; display:none;">
+  </div>
+
+<script>
+  const { ipcRenderer } = require('electron');
+
+  const TEST = true;   // true = quick test (all 4 reminders in ~45 seconds). Set false for daily use.
+  const LATER = 10;     // "Remind me later" = 10 minutes
+
+  const reminders = [
+    { id: 'water', icon: '💧', title: 'Hydration Check', pose: 'avatar4.png', every: 60, goal: 8,
+      yes: 'Yes, done ✓',
+      msgs: ["Have you had some water?", "Time for a sip, Shuruthi! Your brain needs it.",
+             "Quick break: drink a glass of water.", "Coding is thirsty work. Water time!"] },
+    { id: 'stretch', icon: '🧘', title: 'Stretch Break', pose: 'avatar1.png', every: 45,
+      yes: 'Stretched ✓',
+      msgs: ["Stand up and stretch your back and neck for 1 minute.",
+             "Roll your shoulders and shake out your hands.",
+             "You have been sitting a while. Walk around for 2 minutes."] },
+    { id: 'eyes', icon: '👀', title: 'Eye Break', pose: 'avatar1.png', every: 20,
+      yes: 'Done ✓',
+      msgs: ["20-20-20 rule: look at something far away for 20 seconds.",
+             "Rest your eyes. Look out of the window for a moment."] },
+    { id: 'jobs', icon: '💼', title: 'Job Hunt', pose: 'avatar1.png', every: 120,
+      yes: 'Applied ✓',
+      msgs: ["Have you applied to a job today? Even one application counts.",
+             "Send one referral request today. Small steps add up.",
+             "Check new openings and apply to one role."] }
+  ];
+
+  const box = document.getElementById('box');
+  const walk = document.getElementById('walk');
+  const pose = document.getElementById('pose');
+  const bubble = document.getElementById('bubble');
+  const icon = document.getElementById('icon');
+  const title = document.getElementById('title');
+  const msg = document.getElementById('msg');
+  const dots = document.getElementById('dots');
+  const counter = document.getElementById('counter');
+  const actions = document.getElementById('actions');
+  const yesBtn = document.getElementById('yes');
+
+  let x = 0, dir = 1, asking = false, current = null;
+  const queue = [];
+
+  // ---------- daily counts ----------
+  function today() { return new Date().toDateString(); }
+  function loadCounts() {
+    try { const s = JSON.parse(localStorage.getItem('pet-counts') || '{}');
+          return s.day === today() ? s : { day: today(), counts: {} }; }
+    catch (e) { return { day: today(), counts: {} }; }
+  }
+  function getCount(id) { return loadCounts().counts[id] || 0; }
+  function addCount(id) {
+    const s = loadCounts(); s.counts[id] = (s.counts[id] || 0) + 1;
+    try { localStorage.setItem('pet-counts', JSON.stringify(s)); } catch (e) {}
+  }
+  function renderProgress(r) {
+    const n = getCount(r.id);
+    if (r.goal) {
+      dots.innerHTML = Array.from({ length: r.goal }, (_, i) =>
+        `<span class="dot ${i < n ? 'on' : ''}"></span>`).join('');
+      counter.textContent = `${n} / ${r.goal} today`;
+    } else {
+      dots.innerHTML = '';
+      counter.textContent = `Done ${n} time${n === 1 ? '' : 's'} today`;
+    }
+  }
+
+  // ---------- walking ----------
+  setInterval(() => {
+   if (!asking && !idle) {
+      x += dir * 1.5;
+      if (x > window.innerWidth - 300) dir = -1;
+      if (x < 0) dir = 1;
+      box.style.left = x + 'px';
+    }
+    const flip = dir === 1 ? 'none' : 'scaleX(-1)';
+    walk.style.transform = flip;
+    pose.style.transform = flip;
+  }, 30);
+
+  // ---------- reminder logic ----------
+  function schedule(r, minutes) {
+    setTimeout(() => trigger(r), TEST ? 10000 : minutes * 60 * 1000);
+  }
+
+  function trigger(r) {
+    if (asking) { if (!queue.includes(r)) queue.push(r); return; }
+    show(r);
+  }
+
+  function show(r) {
+    asking = true; current = r;
+    icon.textContent = r.icon;
+    title.textContent = r.title;
+    msg.textContent = r.msgs[Math.floor(Math.random() * r.msgs.length)];
+    yesBtn.textContent = r.yes;
+    actions.style.display = 'flex';
+    renderProgress(r);
+    pose.src = 'images/' + r.pose;
+    walk.style.display = 'none';
+    pose.style.display = 'block';
+    bubble.style.display = 'block';
+    bubble.style.animation = 'none'; bubble.offsetHeight; bubble.style.animation = '';
+  }
+
+  function finish(r, nextMinutes) {
+    asking = false;
+    bubble.style.display = 'none';
+    pose.style.display = 'none';
+    walk.style.display = 'block';
+    ipcRenderer.send('mouse', true);
+    schedule(r, nextMinutes);
+    if (queue.length) setTimeout(() => trigger(queue.shift()), 1500);
+  }
+
+  bubble.addEventListener('mouseenter', () => ipcRenderer.send('mouse', false));
+  bubble.addEventListener('mouseleave', () => ipcRenderer.send('mouse', true));
+
+  yesBtn.onclick = () => {
+    const r = current;
+    addCount(r.id);
+    renderProgress(r);
+    msg.textContent = (r.goal && getCount(r.id) >= r.goal)
+      ? "Daily goal reached! Amazing! 🏆" : "Great job! Keep going 💪";
+    actions.style.display = 'none';
+    setTimeout(() => finish(r, r.every), 1800);
+  };
+  document.getElementById('later').onclick = () => finish(current, LATER);
+  // ---------- click her to talk ----------
+  const talk = document.getElementById('talk');
+  const chats = [
+    "Hi Shuruthi! 👋",
+    "You are doing great today!",
+    "One more bug fixed, one step closer to the job!",
+    "Take a deep breath. You've got this. 💙",
+    "Believe in yourself. Your offer letter is coming! 🌟",
+    "Don't forget to drink some water 💧"
+  ];
+
+  function sayHi() {
+    if (asking) return;
+    asking = true;
+    talk.textContent = chats[Math.floor(Math.random() * chats.length)];
+    talk.style.display = 'block';
+    talk.style.animation = 'none'; talk.offsetHeight; talk.style.animation = '';
+    walk.style.display = 'none';
+    pose.src = 'images/avatar1.png';
+    pose.style.display = 'block';
+    setTimeout(() => {
+      talk.style.display = 'none';
+      pose.style.display = 'none';
+      walk.style.display = 'block';
+      ipcRenderer.send('mouse', true);
+      asking = false;
+      if (queue.length) setTimeout(() => trigger(queue.shift()), 1500);
+    }, 3500);
+  }
+
+  [walk, pose].forEach(el => {
+    el.addEventListener('mouseenter', () => ipcRenderer.send('mouse', false));
+       el.addEventListener('mouseleave', () => { if (!dragging) ipcRenderer.send('mouse', true); });
+        el.addEventListener('contextmenu', () => ipcRenderer.send('menu'));
+  });
+    // ---------- idle: stop and stand sometimes ----------
+  let idle = false;
+
+  function endIdle() {
+    idle = false;
+    if (asking) return;
+    if (Math.random() < 0.5) dir = -dir;   // sometimes turn around
+    pose.style.display = 'none';
+    walk.style.display = 'block';
+  }
+
+  function goIdle() {
+    if (!asking && !idle) {
+      idle = true;
+      walk.style.display = 'none';
+      pose.src = 'images/avatar1.png';
+      pose.style.display = 'block';
+      setTimeout(endIdle, 4000 + Math.random() * 4000);
+    }
+    setTimeout(goIdle, 15000 + Math.random() * 20000);
+  }
+  setTimeout(goIdle, 3000);
+    // ---------- drag her ----------
+  let dragging = false, moved = false, justDragged = false;
+  let offX = 0, offY = 0, startX = 0, startY = 0;
+
+  [walk, pose].forEach(el => {
+    el.style.cursor = 'grab';
+
+    el.addEventListener('mousedown', e => {
+      if (e.button !== 0 || asking) return;
+      const r = box.getBoundingClientRect();
+      offX = e.clientX - r.left;
+      offY = r.bottom - e.clientY;
+      startX = e.clientX; startY = e.clientY;
+      dragging = true; moved = false;
+      e.preventDefault();
+    });
+
+    // after a drag, ignore the click so she doesn't start talking
+    el.addEventListener('click', e => {
+      if (justDragged) e.stopImmediatePropagation();
+    }, true);
+  });
+
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    if (!moved) return;
+    justDragged = true;
+    setTimeout(() => { justDragged = false; }, 80);
+    box.style.transition = 'bottom .5s cubic-bezier(.4,0,1,.6)';   // fall down
+    box.style.bottom = '0px';
+    setTimeout(() => { box.style.transition = ''; }, 600);
+    pose.style.display = 'none';
+    walk.style.display = 'block';
+    asking = false;
+    if (queue.length) setTimeout(() => trigger(queue.shift()), 1500);
+  }
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    if (e.buttons === 0) { endDrag(); return; }
+    ipcRenderer.send('mouse', false);
+    if (!moved && Math.hypot(e.clientX - startX, e.clientY - startY) < 6) return;
+    if (!moved) {
+      moved = true; asking = true; idle = false;
+      walk.style.display = 'none';
+      pose.src = 'images/avatar1.png';
+      pose.style.display = 'block';
+      box.style.transition = '';
+    }
+    x = Math.max(0, Math.min(window.innerWidth - 250, e.clientX - offX));
+    box.style.left = x + 'px';
+    box.style.bottom = Math.max(0, window.innerHeight - (e.clientY + offY)) + 'px';
+  });
+
+  document.addEventListener('mouseup', endDrag);
+  // ---------- first start ----------
+  reminders.forEach((r, i) => {
+    setTimeout(() => trigger(r), TEST ? 8000 + i * 12000 : r.every * 60 * 1000);
+  });
+</script>
+</body>
