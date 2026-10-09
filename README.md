@@ -2,6 +2,8 @@
 
 A Windows desktop companion app built with Electron. My own 3D cartoon avatar walks along the bottom of the screen, reminds me to take care of myself, and reacts when I click or drag her.
 
+https://github.com/user-attachments/assets/7135ca96-1bac-4725-b0f1-0fb3a08e4de2
+
 ## Features
 - Transparent, always-on-top overlay window that stays click-through for other apps
 - Real walking animation (video with a chroma-keyed transparent background)
